@@ -1,0 +1,32 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Virtual envs
+.venv/
+.env/
+
+# Test/coverage caches
+.pytest_cache/
+.ruff_cache/
+.benchmarks/
+
+# Editor/OS cruft
+.DS_Store
+*.swp
+
+# Node/Vite build output
+frontend/dist/
+frontend/node_modules/
+
+# Vercel metadata
+frontend/.vercel/
+
+# Simulator flags generated at runtime
+simulator/simulator/__pycache__/
+
+# Misc
+backend-env.yaml

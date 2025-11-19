@@ -1,0 +1,4 @@
+﻿(Optional) Simulator prompt (if you also split this to a third chat)
+Create simulator/simulator.py (Python, httpx, asyncio) that spins up 200 devices posting to http://localhost:8000/v1/checkin every 3–5s. Baseline health is good; read simulator/sim_flags.json to hot-toggle "error_rate" from 0.00 to 0.10 during the demo to trigger a pause/rollback. Print a tiny console summary every 10s.
+CLI:
+python simulator.py --devices 200 --error-rate 0.00 --latency-ms 150 --ring pilot

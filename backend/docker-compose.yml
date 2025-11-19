@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  backend:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - CORS_ORIGINS=http://localhost:5173
+    volumes:
+      - ./app:/app/app
+    restart: unless-stopped
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /workspace
+    volumes:
+      - ./frontend:/workspace
+    command: sh -c "if [ -f package.json ]; then npm install && npm run dev -- --host 0.0.0.0 --port 5173; else tail -f /dev/null; fi"
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE=http://localhost:8000
+
+  simulator:
+    image: python:3.11-slim
+    working_dir: /workspace
+    volumes:
+      - ./simulator:/workspace
+    command: sh -c "if [ -f device_sim.py ]; then pip install -r requirements.txt && python device_sim.py; else tail -f /dev/null; fi"
+    environment:
+      - API_URL=http://backend:8000

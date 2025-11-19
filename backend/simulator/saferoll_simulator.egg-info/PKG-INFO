@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: saferoll-simulator
+Version: 0.1.0
+Summary: Device simulator for SafeRoll
+Requires-Python: >=3.11
+Requires-Dist: httpx>=0.28
+Requires-Dist: typer>=0.12

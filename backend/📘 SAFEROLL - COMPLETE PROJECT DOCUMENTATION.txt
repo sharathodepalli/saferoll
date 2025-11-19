@@ -1,0 +1,2373 @@
+﻿📘 SAFEROLL - COMPLETE PROJECT DOCUMENTATION
+Project Overview
+SafeRoll is an intelligent progressive rollout orchestrator for hospital TV firmware/software updates. It prevents catastrophic fleet-wide failures by deploying updates in stages (rings) and automatically detecting issues before they spread.
+________________
+
+
+📋 TABLE OF CONTENTS
+1. Business Requirements
+2. System Architecture
+3. Technology Stack
+4. Database Schema
+5. API Specifications
+6. Backend Components
+7. Frontend Components
+8. Simulator Specifications
+9. Business Logic & Rules
+10. User Interface Specifications
+11. Demo Scenarios
+12. Development Workflow
+13. Testing Strategy
+14. Deployment Guide
+________________
+
+
+1. BUSINESS REQUIREMENTS
+1.1 Problem Statement
+PDi Communication Systems has 1,000,000+ hospital TVs deployed globally. When they push firmware/software updates:
+* Current Risk: All-or-nothing deployment can brick thousands of devices
+* Cost of Failure: $50M-$100M in hardware, support, and reputation damage
+* Patient Safety: Failed TVs in ICUs/ERs create safety concerns
+1.2 Solution Requirements
+SafeRoll must:
+1. Deploy progressively through rings (Pilot → 5% → 25% → 100%)
+2. Monitor health metrics in real-time (crash rate, boot success, latency)
+3. Evaluate SLO gates before promoting to next ring
+4. Automatically rollback when critical failures detected
+5. Provide visibility through real-time dashboard
+6. Audit all actions for compliance and debugging
+1.3 Success Criteria
+* Detect and stop bad updates before reaching >5% of fleet
+* Reduce update-related incidents by 99%
+* Provide decision in <10 seconds
+* Support 1M+ devices (demo with 1,000)
+* Zero downtime for SafeRoll itself
+1.4 Key Metrics
+* Time to Detection: How fast SafeRoll identifies issues (target: <5 min)
+* Blast Radius Prevented: Devices saved from bad updates (target: >95%)
+* False Positive Rate: Incorrectly blocked good updates (target: <1%)
+* Automation Rate: Decisions made without human intervention (target: >90%)
+________________
+
+
+2. SYSTEM ARCHITECTURE
+2.1 High-Level Architecture
+┌─────────────────────────────────────────────────────────┐
+│                    SAFEROLL SYSTEM                       │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│  ┌──────────────┐    ┌──────────────┐   ┌───────────┐ │
+│  │   Frontend   │◄───│   Backend    │◄──│ Simulator │ │
+│  │  Dashboard   │    │   (FastAPI)  │   │ (Devices) │ │
+│  │  (React/TS)  │    │              │   │           │ │
+│  └──────────────┘    └──────┬───────┘   └───────────┘ │
+│         ▲                    │                          │
+│         │                    ▼                          │
+│         │           ┌──────────────┐                   │
+│         │           │   Database   │                   │
+│         │           │  (Optional)  │                   │
+│         │           └──────────────┘                   │
+│         │                                               │
+│         └───────────── WebSocket ──────────────────────┘
+│                     (Real-time Updates)                 │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+
+
+External Integration (Future):
+┌──────────────┐
+│    GENiO     │◄─── SafeRoll controls via API
+│ (PDi's CDM)  │     (promote/pause/rollback)
+└──────────────┘
+
+
+2.2 Component Responsibilities
+Frontend (React Dashboard)
+* Display active rollouts and their status
+* Show real-time health metrics per ring
+* Visualize SLO gate status
+* Display event timeline/audit log
+* Allow manual promotion/pause/rollback
+* WebSocket connection for live updates
+Backend (FastAPI)
+* Receive health checks from devices
+* Store health data (in-memory or database)
+* Aggregate health metrics per ring
+* Evaluate SLO gates
+* Make promotion decisions
+* Manage rollout state machine
+* Broadcast updates via WebSocket
+* Provide REST API for frontend
+Simulator (Python)
+* Simulate 1,000 hospital TV devices
+* Send health checks every 5 seconds
+* Support failure injection (manual trigger)
+* Distribute devices across rings
+* Generate realistic failure patterns
+Database (Optional for MVP)
+* Store health check history
+* Store rollout events
+* Store device metadata
+* Can use in-memory for MVP, PostgreSQL for production
+2.3 Data Flow
+1. Device Health Flow:
+   Device → POST /api/health → Backend → Store → Aggregate → Evaluate SLOs
+
+
+2. Promotion Flow:
+   User → POST /api/rollouts/{id}/promote → Check SLOs → 
+   Update State → Notify GENiO (mock) → Broadcast WebSocket
+
+
+3. Auto-Rollback Flow:
+   Background Monitor → Check Health → Detect Critical Failure →
+   Trigger Rollback → Update State → Alert → Broadcast
+
+
+4. Real-time Updates:
+   Backend → WebSocket → Frontend → Re-render Dashboard
+
+
+2.4 Deployment Architecture
+MVP (Local Development):
+* Backend: Python FastAPI on localhost:8000
+* Frontend: React dev server on localhost:5173
+* Simulator: Python script on localhost
+* Database: In-memory (Python dict/list) or SQLite
+Production (Future):
+* Backend: Docker container on Railway/Render/Fly.io
+* Frontend: Static build on Vercel/Netlify
+* Database: Managed PostgreSQL
+* Monitoring: Prometheus + Grafana
+________________
+
+
+3. TECHNOLOGY STACK
+3.1 Backend
+Language & Framework:
+* Python 3.11+
+* FastAPI (async web framework)
+* Uvicorn (ASGI server)
+Key Libraries:
+* pydantic - Data validation
+* websockets - Real-time communication
+* python-dotenv - Configuration
+* aiosqlite or asyncpg - Database (optional)
+Why FastAPI:
+* Fast to develop
+* Auto-generates API docs
+* Built-in WebSocket support
+* Type hints for reliability
+* Async for handling many connections
+3.2 Frontend
+Language & Framework:
+* TypeScript
+* React 18+
+* Vite (build tool)
+Key Libraries:
+* @tanstack/react-query - Data fetching
+* zustand - State management
+* recharts - Charts
+* shadcn/ui or antd - UI components
+* socket.io-client or native WebSocket - Real-time
+Why React:
+* Industry standard
+* Rich ecosystem
+* Great for dashboards
+* Easy to find developers
+3.3 Simulator
+Language:
+* Python 3.11+
+Key Libraries:
+* requests - HTTP client
+* schedule - Periodic tasks
+* click - CLI interface
+3.4 Database (Optional for MVP)
+Options:
+1. In-Memory (MVP) - Python lists/dicts, fast, simple
+2. SQLite - Single file, no setup, good for demo
+3. PostgreSQL - Production-ready, handles 1M devices
+Recommendation: Start with in-memory, add database later if needed.
+________________
+
+
+4. DATABASE SCHEMA
+4.1 Core Tables (If using database)
+Table: devices
+Stores device metadata.
+Column
+	Type
+	Description
+	device_id
+	VARCHAR(50) PRIMARY KEY
+	Unique device identifier
+	ring
+	VARCHAR(20)
+	Current ring assignment
+	version
+	VARCHAR(20)
+	Current firmware version
+	last_seen
+	TIMESTAMP
+	Last health check time
+	created_at
+	TIMESTAMP
+	Device registration time
+	Table: health_checks
+Stores device health data (time-series).
+Column
+	Type
+	Description
+	id
+	BIGSERIAL PRIMARY KEY
+	Auto-increment ID
+	device_id
+	VARCHAR(50)
+	Foreign key to devices
+	ring
+	VARCHAR(20)
+	Ring at time of check
+	version
+	VARCHAR(20)
+	Version at time of check
+	boot_ok
+	BOOLEAN
+	Boot success flag
+	crash_free
+	FLOAT
+	Crash-free rate (0.0-1.0)
+	checkin_latency_ms
+	INTEGER
+	Latency in milliseconds
+	timestamp
+	TIMESTAMP
+	When check occurred
+	received_at
+	TIMESTAMP
+	When backend received it
+	Indexes:
+* (ring, timestamp) - Fast queries by ring and time
+* (device_id, timestamp) - Device history
+Table: rollouts
+Stores rollout metadata.
+Column
+	Type
+	Description
+	rollout_id
+	VARCHAR(50) PRIMARY KEY
+	Unique rollout identifier
+	version
+	VARCHAR(20)
+	Version being deployed
+	state
+	VARCHAR(20)
+	Current state (created, pilot, ring_5, etc.)
+	current_ring
+	VARCHAR(20)
+	Current deployment ring
+	created_at
+	TIMESTAMP
+	Rollout creation time
+	updated_at
+	TIMESTAMP
+	Last state change
+	Table: rollout_events
+Audit log of all rollout actions.
+Column
+	Type
+	Description
+	id
+	BIGSERIAL PRIMARY KEY
+	Auto-increment ID
+	rollout_id
+	VARCHAR(50)
+	Foreign key to rollouts
+	action
+	VARCHAR(20)
+	PROMOTE, PAUSE, ROLLBACK, etc.
+	from_ring
+	VARCHAR(20)
+	Previous ring (nullable)
+	to_ring
+	VARCHAR(20)
+	Next ring (nullable)
+	reason
+	TEXT
+	Reason for action
+	evaluation
+	JSONB
+	SLO evaluation results
+	timestamp
+	TIMESTAMP
+	When action occurred
+	Indexes:
+* (rollout_id, timestamp) - Event timeline queries
+4.2 In-Memory Data Structures (MVP Alternative)
+# Backend maintains these in memory:
+
+
+health_data: List[Dict] = []
+# Each element:
+# {
+#   "device_id": str,
+#   "ring": str,
+#   "version": str,
+#   "boot_ok": bool,
+#   "crash_free": float,
+#   "checkin_latency_ms": int,
+#   "timestamp": str (ISO format),
+#   "received_at": str (ISO format)
+# }
+# Keep only last 10 minutes of data
+
+
+rollouts: Dict[str, Dict] = {}
+# Key: rollout_id
+# Value:
+# {
+#   "rollout_id": str,
+#   "version": str,
+#   "state": str,
+#   "current_ring": str | None,
+#   "created_at": str,
+#   "events": [
+#     {
+#       "action": str,
+#       "from_ring": str | None,
+#       "to_ring": str | None,
+#       "reason": str,
+#       "evaluation": Dict,
+#       "timestamp": str
+#     }
+#   ]
+# }
+
+
+________________
+
+
+5. API SPECIFICATIONS
+5.1 Health Endpoints
+POST /api/health
+Purpose: Receive device health check
+Request Body:
+{
+  "device_id": "device_0001",
+  "ring": "pilot",
+  "version": "v2.1",
+  "boot_ok": true,
+  "crash_free": 0.995,
+  "checkin_latency_ms": 45,
+  "timestamp": "2025-11-18T10:30:00Z"
+}
+
+
+Response:
+{
+  "status": "ok"
+}
+
+
+Error Responses:
+* 400 Bad Request - Invalid data format
+* 500 Internal Server Error - Server error
+________________
+
+
+GET /api/health/ring/{ring}
+Purpose: Get aggregated health metrics for a ring
+Parameters:
+* ring (path) - Ring name: "pilot", "ring_5", "ring_25", "ring_100"
+* window_minutes (query, optional, default=5) - Time window for aggregation
+Response:
+{
+  "ring": "pilot",
+  "total_devices": 100,
+  "crash_free_rate": 0.992,
+  "boot_success_rate": 0.998,
+  "median_latency_ms": 52,
+  "window_minutes": 5
+}
+
+
+Business Logic:
+* Filter health checks to specified ring
+* Filter to time window (now - window_minutes to now)
+* Calculate metrics:
+   * crash_free_rate: Average of all crash_free values
+   * boot_success_rate: Percentage where boot_ok=true
+   * median_latency_ms: Median of all latency values
+________________
+
+
+5.2 Rollout Endpoints
+POST /api/rollouts
+Purpose: Create a new rollout
+Request Body:
+{
+  "version": "v2.1"
+}
+
+
+Response:
+{
+  "rollout_id": "rollout_1700312345",
+  "version": "v2.1",
+  "state": "created",
+  "current_ring": null,
+  "created_at": "2025-11-18T10:30:00Z",
+  "events": [
+    {
+      "action": "CREATED",
+      "timestamp": "2025-11-18T10:30:00Z"
+    }
+  ]
+}
+
+
+________________
+
+
+GET /api/rollouts
+Purpose: List all rollouts
+Response:
+{
+  "rollouts": [
+    {
+      "rollout_id": "rollout_1700312345",
+      "version": "v2.1",
+      "state": "pilot",
+      "current_ring": "pilot",
+      "created_at": "2025-11-18T10:30:00Z"
+    }
+  ]
+}
+
+
+________________
+
+
+GET /api/rollouts/{rollout_id}
+Purpose: Get detailed rollout information
+Response:
+{
+  "rollout_id": "rollout_1700312345",
+  "version": "v2.1",
+  "state": "ring_5",
+  "current_ring": "ring_5",
+  "created_at": "2025-11-18T10:30:00Z",
+  "events": [
+    {
+      "action": "CREATED",
+      "timestamp": "2025-11-18T10:30:00Z"
+    },
+    {
+      "action": "START",
+      "to_ring": "pilot",
+      "timestamp": "2025-11-18T10:31:00Z"
+    },
+    {
+      "action": "PROMOTE",
+      "from_ring": "pilot",
+      "to_ring": "ring_5",
+      "timestamp": "2025-11-18T10:45:00Z",
+      "evaluation": { /* SLO results */ }
+    }
+  ]
+}
+
+
+________________
+
+
+POST /api/rollouts/{rollout_id}/start
+Purpose: Start rollout (deploy to pilot ring)
+Response:
+{
+  "rollout_id": "rollout_1700312345",
+  "state": "pilot",
+  "current_ring": "pilot",
+  "events": [ /* updated events list */ ]
+}
+
+
+Business Logic:
+* Change state from "created" to "pilot"
+* Set current_ring to "pilot"
+* Add START event to timeline
+* (Future: Trigger GENiO API to deploy to pilot devices)
+________________
+
+
+POST /api/rollouts/{rollout_id}/promote
+Purpose: Promote rollout to next ring
+Response (Success):
+{
+  "rollout_id": "rollout_1700312345",
+  "state": "ring_5",
+  "current_ring": "ring_5",
+  "events": [ /* updated with PROMOTE event */ ]
+}
+
+
+Response (Cannot Promote):
+{
+  "error": "Cannot promote: PAUSE",
+  "reason": "SLO gates failing but not critical",
+  "evaluation": {
+    "ring": "pilot",
+    "overall": "FAIL",
+    "gates": {
+      "crash_free_rate": {
+        "value": 0.985,
+        "threshold": 0.990,
+        "passed": false
+      }
+    }
+  }
+}
+
+
+Business Logic:
+1. Get current ring from rollout
+2. Determine next ring: pilot → ring_5 → ring_25 → ring_100
+3. Call SLO evaluation engine
+4. If evaluation returns "PROMOTE":
+   * Update state and current_ring
+   * Add PROMOTE event
+   * (Future: Tell GENiO to deploy)
+5. If evaluation returns "PAUSE" or "ROLLBACK":
+   * Return error with reason
+________________
+
+
+POST /api/rollouts/{rollout_id}/pause
+Purpose: Manually pause rollout
+Request Body (optional):
+{
+  "reason": "Manual pause for investigation"
+}
+
+
+Response:
+{
+  "rollout_id": "rollout_1700312345",
+  "state": "paused",
+  "events": [ /* updated with PAUSE event */ ]
+}
+
+
+________________
+
+
+POST /api/rollouts/{rollout_id}/rollback
+Purpose: Rollback rollout to previous version
+Request Body (optional):
+{
+  "reason": "Critical bugs detected"
+}
+
+
+Response:
+{
+  "rollout_id": "rollout_1700312345",
+  "state": "rolled_back",
+  "events": [ /* updated with ROLLBACK event */ ]
+}
+
+
+Business Logic:
+* Change state to "rolled_back"
+* Add ROLLBACK event with reason
+* (Future: Tell GENiO to revert devices to previous version)
+________________
+
+
+GET /api/rollouts/{rollout_id}/should_promote
+Purpose: Ask SafeRoll if rollout should be promoted (decision endpoint)
+Response:
+{
+  "action": "PROMOTE",
+  "reason": "All SLO gates passed",
+  "evaluation": {
+    "ring": "pilot",
+    "overall": "PASS",
+    "gates": {
+      "crash_free_rate": {
+        "value": 0.995,
+        "threshold": 0.990,
+        "operator": ">=",
+        "passed": true
+      },
+      "boot_success_rate": {
+        "value": 0.998,
+        "threshold": 0.995,
+        "operator": ">=",
+        "passed": true
+      },
+      "median_latency_ms": {
+        "value": 45,
+        "threshold": 500,
+        "operator": "<=",
+        "passed": true
+      }
+    },
+    "health": {
+      "ring": "pilot",
+      "total_devices": 100,
+      "crash_free_rate": 0.995,
+      "boot_success_rate": 0.998,
+      "median_latency_ms": 45
+    }
+  }
+}
+
+
+Possible Actions:
+* PROMOTE - Safe to advance
+* PAUSE - SLOs failing but not critical
+* ROLLBACK - Critical failure detected
+________________
+
+
+5.3 WebSocket Endpoint
+WS /ws
+Purpose: Real-time updates to frontend
+Connection Flow:
+1. Frontend connects to ws://localhost:8000/ws
+2. Backend accepts and adds to active connections list
+3. Backend sends initial "connected" message
+4. Backend broadcasts updates on events:
+   * Health updates (throttled, every 10th message)
+   * Rollout state changes
+   * Auto-rollback triggers
+Message Types:
+Connected:
+{
+  "type": "connected",
+  "message": "Connected to SafeRoll"
+}
+
+
+Health Update:
+{
+  "type": "health_update",
+  "ring": "pilot",
+  "total_devices": 100
+}
+
+
+Rollout Update:
+{
+  "type": "rollout_update",
+  "data": { /* full rollout object */ }
+}
+
+
+Rollout Created:
+{
+  "type": "rollout_created",
+  "data": { /* new rollout object */ }
+}
+
+
+________________
+
+
+5.4 System Endpoints
+GET /
+Purpose: API root / status
+Response:
+{
+  "name": "SafeRoll",
+  "version": "1.0.0",
+  "status": "running",
+  "active_rollouts": 2,
+  "total_devices": 1000
+}
+
+
+GET /health
+Purpose: Health check for monitoring
+Response:
+{
+  "status": "healthy"
+}
+
+
+________________
+
+
+6. BACKEND COMPONENTS
+6.1 Main Application (main.py)
+Responsibilities:
+* Initialize FastAPI app
+* Configure CORS middleware
+* Register all API routes
+* Set up WebSocket endpoint
+* Manage application lifecycle (startup/shutdown)
+* Start background monitoring task
+Key Features:
+* Lifespan context manager for startup/shutdown
+* CORS configuration for frontend access
+* Global state management (in-memory stores)
+* WebSocket connection management
+* Error handling
+________________
+
+
+6.2 SLO Evaluation Engine (core/slo_engine.py or inline)
+Purpose: Evaluate Service Level Objectives and make promotion decisions
+Core Logic:
+SLO Gates Definition:
+Gate 1: Crash-Free Rate
+- Metric: Average of device.crash_free values
+- Threshold: >= 99.0% (0.990)
+- Critical: < 95.0% (0.950)
+
+
+Gate 2: Boot Success Rate
+- Metric: Percentage of devices with boot_ok=true
+- Threshold: >= 99.5% (0.995)
+- Critical: < 97.0% (0.970)
+
+
+Gate 3: Median Latency
+- Metric: Median of checkin_latency_ms values
+- Threshold: <= 500 ms
+- Critical: > 1000 ms
+
+
+Decision Algorithm:
+1. Get health metrics for current ring (last 5 minutes)
+2. Evaluate each SLO gate:
+   - Calculate metric value
+   - Compare to threshold
+   - Mark as PASS or FAIL
+
+
+3. Make decision:
+   IF all gates PASS:
+     RETURN "PROMOTE" (safe to advance)
+   
+   ELSE IF crash_free_rate < 0.950 OR boot_success_rate < 0.970:
+     RETURN "ROLLBACK" (critical failure)
+   
+   ELSE:
+     RETURN "PAUSE" (failing but not critical)
+
+
+4. Include detailed evaluation in response
+
+
+Example Evaluation Result:
+{
+  "action": "PAUSE",
+  "reason": "SLO gates failing but not critical",
+  "evaluation": {
+    "ring": "ring_5",
+    "overall": "FAIL",
+    "gates": {
+      "crash_free_rate": {
+        "value": 0.988,
+        "threshold": 0.990,
+        "passed": false
+      },
+      "boot_success_rate": {
+        "value": 0.996,
+        "threshold": 0.995,
+        "passed": true
+      },
+      "median_latency_ms": {
+        "value": 435,
+        "threshold": 500,
+        "passed": true
+      }
+    }
+  }
+}
+
+
+________________
+
+
+6.3 Rollout State Machine
+States:
+* created - Rollout initialized, not started
+* pilot - Deployed to pilot ring (100 devices)
+* ring_5 - Deployed to 5% ring (50k devices)
+* ring_25 - Deployed to 25% ring (250k devices)
+* ring_100 - Deployed to 100% ring (all devices)
+* paused - Manually or automatically paused
+* rolled_back - Reverted due to failure
+* completed - Successfully deployed to 100%
+State Transitions:
+created → pilot (START action)
+pilot → ring_5 (PROMOTE action, if SLOs pass)
+ring_5 → ring_25 (PROMOTE action, if SLOs pass)
+ring_25 → ring_100 (PROMOTE action, if SLOs pass)
+ring_100 → completed (automatic)
+
+
+Any state → paused (PAUSE action)
+Any state → rolled_back (ROLLBACK action)
+
+
+Events: Each state transition creates an event:
+{
+  "action": "PROMOTE" | "PAUSE" | "ROLLBACK" | "START" | "CREATED",
+  "from_ring": "pilot",
+  "to_ring": "ring_5",
+  "reason": "All SLO gates passed",
+  "timestamp": "2025-11-18T10:45:00Z",
+  "evaluation": { /* SLO evaluation result */ }
+}
+
+
+________________
+
+
+6.4 Health Data Aggregation
+Purpose: Aggregate raw health checks into useful metrics
+Functions:
+aggregate_ring_health(ring: str, window_minutes: int)
+1. Filter health_data to:
+   * Matching ring
+   * Timestamp within window (now - window_minutes to now)
+2. If no data found:
+   * Return default "healthy" values (1.0, 1.0, 0)
+Calculate metrics:
+total_devices = count of unique device_ids
+crash_free_rate = average(device.crash_free for all devices)
+boot_success_rate = count(boot_ok=true) / total
+median_latency_ms = median(checkin_latency_ms for all)
+3. 4. Return aggregated metrics
+Data Retention:
+* Keep only last 10 minutes of health data in memory
+* Prune old data on each health check receipt
+* For production: use TimescaleDB for efficient time-series storage
+________________
+
+
+6.5 Background Monitor
+Purpose: Continuously check active rollouts for critical failures
+Algorithm:
+LOOP every 10-30 seconds:
+  FOR each rollout in active_rollouts:
+    IF rollout.state NOT IN [paused, completed, rolled_back]:
+      
+      # Get current health
+      health = get_ring_health(rollout.current_ring, window_minutes=5)
+      
+      # Check for critical failure
+      IF health.crash_free_rate < 0.950:
+        
+        # AUTOMATIC ROLLBACK
+        rollout.state = "rolled_back"
+        rollout.events.append({
+          "action": "AUTO_ROLLBACK",
+          "reason": f"Critical: Crash-free rate {health.crash_free_rate:.1%}",
+          "timestamp": now()
+        })
+        
+        # Alert
+        log.critical(f"AUTO ROLLBACK: {rollout.rollout_id}")
+        
+        # Broadcast to frontend
+        websocket_broadcast({
+          "type": "rollout_update",
+          "data": rollout
+        })
+        
+        # (Future: Call GENiO API to revert)
+
+
+Why Needed:
+* Catches failures even if user isn't watching
+* Prevents "walk away and forget" disasters
+* Shows SafeRoll is intelligent and autonomous
+________________
+
+
+6.6 WebSocket Manager
+Purpose: Manage real-time connections to frontend
+Responsibilities:
+* Accept new WebSocket connections
+* Maintain list of active connections
+* Broadcast messages to all connected clients
+* Remove disconnected clients
+* Handle connection errors gracefully
+Broadcasting Strategy:
+* Throttle health updates (every 10th message, not every one)
+* Always broadcast: rollout state changes, auto-rollbacks
+* Include full context in messages (don't require frontend to refetch)
+________________
+
+
+7. FRONTEND COMPONENTS
+7.1 Application Structure
+frontend/src/
+├── App.tsx                 # Main app, routing
+├── main.tsx                # Entry point
+├── pages/
+│   ├── Dashboard.tsx       # Main dashboard (list of rollouts)
+│   └── RolloutDetail.tsx   # Single rollout detail view
+├── components/
+│   ├── MetricCard.tsx      # Single metric display
+│   ├── RingProgress.tsx    # Ring progression visual
+│   ├── HealthChart.tsx     # Time-series chart
+│   ├── EventTimeline.tsx   # Event log display
+│   ├── SLOGatesPanel.tsx   # SLO gate status
+│   └── ActionButtons.tsx   # Promote/Pause/Rollback buttons
+├── hooks/
+│   ├── useWebSocket.ts     # WebSocket hook
+│   ├── useRollout.ts       # Fetch rollout data
+│   └── useRingHealth.ts    # Fetch ring health
+├── lib/
+│   ├── api.ts              # API client
+│   └── types.ts            # TypeScript types
+└── styles/
+    └── globals.css         # Global styles
+
+
+________________
+
+
+7.2 Page: Dashboard
+Purpose: Landing page showing all rollouts
+Layout:
+┌─────────────────────────────────────────────┐
+│  SafeRoll Dashboard                         │
+│  [+ New Rollout]                            │
+├─────────────────────────────────────────────┤
+│                                             │
+│  Active Rollouts (2)                        │
+│  ┌──────────────────────────────────────┐  │
+│  │ v2.1 - Ring 5% - HEALTHY             │  │
+│  │ 50,000 devices | 99.2% crash-free    │  │
+│  │ [View Details]                        │  │
+│  └──────────────────────────────────────┘  │
+│                                             │
+│  ┌──────────────────────────────────────┐  │
+│  │ v2.0 - Completed                     │  │
+│  │ 1,000,000 devices | SUCCESS          │  │
+│  │ [View Details]                        │  │
+│  └──────────────────────────────────────┘  │
+│                                             │
+│  Recent History (3)                         │
+│  ┌──────────────────────────────────────┐  │
+│  │ v1.9 - Rolled Back                   │  │
+│  │ Critical failure at 5% ring          │  │
+│  └──────────────────────────────────────┘  │
+│                                             │
+└─────────────────────────────────────────────┘
+
+
+Features:
+* List all rollouts sorted by created_at DESC
+* Filter: Active / Completed / Failed
+* Create new rollout button
+* Click rollout card to view details
+* Show rollout status at a glance
+Data Fetching:
+* GET /api/rollouts on mount
+* WebSocket updates for real-time changes
+* Auto-refresh every 30 seconds as backup
+________________
+
+
+7.3 Page: Rollout Detail
+Purpose: Detailed view of a single rollout
+Layout:
+┌────────────────────────────────────────────────────┐
+│  ← Back                                            │
+│  Rollout: v2.1 | State: Ring 5% | Started 2h ago  │
+├────────────────────────────────────────────────────┤
+│                                                    │
+│  Ring Progress                                     │
+│  [✓ Pilot] → [● 5%] → [ 25% ] → [ 100% ]        │
+│                                                    │
+│  Current Ring Health (Last 5 min)                 │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐         │
+│  │ Crash    │ │ Boot     │ │ Latency  │         │
+│  │ Free     │ │ Success  │ │          │         │
+│  │ 99.2% ✓  │ │ 99.8% ✓  │ │ 45ms ✓   │         │
+│  │ Goal:99% │ │ Goal:99.5%│ │ Goal:500ms│        │
+│  └──────────┘ └──────────┘ └──────────┘         │
+│                                                    │
+│  Health Over Time                                  │
+│  [Line chart showing metrics for last 10 min]     │
+│                                                    │
+│  Actions                                           │
+│  [Promote to 25%] [Pause] [Rollback]             │
+│                                                    │
+│  Event Timeline                                    │
+│  ● 10:45 AM - PROMOTE to 5% (All SLOs passed)    │
+│  ● 10:30 AM - START to Pilot                      │
+│  ● 10:29 AM - CREATED                             │
+│                                                    │
+└────────────────────────────────────────────────────┘
+
+
+Features:
+* Real-time health metrics (WebSocket updates)
+* Visual ring progression
+* SLO gate status (green/yellow/red)
+* Time-series chart (last 10-30 minutes)
+* Action buttons (promote/pause/rollback)
+* Event timeline (audit log)
+* Blast radius calculator (optional)
+Data Fetching:
+* GET /api/rollouts/{id} on mount
+* GET /api/health/ring/{current_ring} every 5 seconds
+* WebSocket for instant updates
+* GET /api/rollouts/{id}/should_promote when user hovers "Promote" button
+________________
+
+
+7.4 Component: MetricCard
+Purpose: Display single metric with status
+Props:
+interface MetricCardProps {
+  title: string;
+  value: number;
+  threshold: number;
+  unit?: string;
+  format?: 'percent' | 'number';
+  operator?: '>=' | '<=';
+}
+
+
+Visual States:
+* Green: Metric passes threshold
+* Yellow: Metric close to threshold (within 5%)
+* Red: Metric fails threshold
+Example:
+┌─────────────────┐
+│ Crash-Free Rate │
+│                 │
+│     99.2%       │ ← Large, bold
+│   Goal: 99.0%   │ ← Small, gray
+│                 │
+│   [✓ PASSING]   │ ← Green badge
+└─────────────────┘
+
+
+________________
+
+
+7.5 Component: RingProgress
+Purpose: Visual progression through rings
+Props:
+interface RingProgressProps {
+  currentRing: string | null;
+  completedRings: string[];
+}
+
+
+Visual:
+[✓ Pilot] → [● 5%] → [ 25% ] → [ 100% ]
+  green    blue/active  gray      gray
+
+
+States:
+* Completed: Green checkmark
+* Active: Blue dot, pulsing animation
+* Upcoming: Gray, not started
+* Failed: Red X (if rolled back)
+________________
+
+
+7.6 Component: HealthChart
+Purpose: Time-series chart of health metrics
+Props:
+interface HealthChartProps {
+  data: Array<{
+    timestamp: string;
+    crashFreeRate: number;
+    bootSuccessRate: number;
+    medianLatency: number;
+  }>;
+  metrics: ('crashFreeRate' | 'bootSuccessRate' | 'medianLatency')[];
+}
+
+
+Chart Type: Line chart (Recharts)
+Features:
+* Multiple series (crash-free, boot success, latency)
+* X-axis: Time (last 10-30 min)
+* Y-axis: Dual axis (percentage + latency)
+* Threshold lines (show SLO gates)
+* Tooltips on hover
+* Legend
+Update Frequency:
+* Fetch new data every 10 seconds
+* Smooth transitions
+________________
+
+
+7.7 Component: EventTimeline
+Purpose: Chronological list of rollout events
+Props:
+interface EventTimelineProps {
+  events: Array<{
+    action: string;
+    from_ring?: string;
+    to_ring?: string;
+    reason?: string;
+    timestamp: string;
+    evaluation?: object;
+  }>;
+}
+
+
+Visual:
+● 10:45 AM - PROMOTE from Pilot to 5%
+  Reason: All SLO gates passed
+  [View Details ▼]
+
+
+● 10:30 AM - START to Pilot
+
+
+● 10:29 AM - CREATED
+
+
+Features:
+* Reverse chronological (newest first)
+* Color-coded by action type:
+   * PROMOTE: Blue
+   * PAUSE: Yellow
+   * ROLLBACK: Red
+   * AUTO_ROLLBACK: Red + alert icon
+* Expandable details (show SLO evaluation)
+* Timestamp formatting (relative: "2 hours ago")
+________________
+
+
+7.8 Component: SLOGatesPanel
+Purpose: Show all SLO gates and their status
+Visual:
+┌─────────────────────────────────────┐
+│ SLO Gates for Ring: 5%              │
+├─────────────────────────────────────┤
+│ ✓ Crash-Free Rate                   │
+│   Current: 99.2% | Goal: 99.0%      │
+│   [████████████████░░] 99.2%        │
+│                                     │
+│ ✓ Boot Success Rate                 │
+│   Current: 99.8% | Goal: 99.5%      │
+│   [█████████████████░] 99.8%        │
+│                                     │
+│ ✓ Median Latency                    │
+│   Current: 45ms | Goal: <500ms      │
+│   [██░░░░░░░░░░░░░░░] 45ms          │
+│                                     │
+│ Overall Status: PASSING ✓           │
+│ Safe to promote                     │
+└─────────────────────────────────────┘
+
+
+Features:
+* Visual progress bars
+* Pass/fail indicators
+* Current value vs threshold
+* Overall decision (PROMOTE/PAUSE/ROLLBACK)
+* Updates every 5 seconds
+________________
+
+
+7.9 Component: ActionButtons
+Purpose: Promote, pause, rollback controls
+Props:
+interface ActionButtonsProps {
+  rolloutId: string;
+  currentState: string;
+  onPromote: () => void;
+  onPause: () => void;
+  onRollback: () => void;
+  canPromote: boolean;
+}
+
+
+Button States:
+* Promote:
+   * Enabled only if canPromote=true
+   * Show tooltip with decision reason on hover
+   * Confirm dialog before action
+* Pause:
+   * Always enabled for active rollouts
+   * Ask for reason (optional text input)
+* Rollback:
+   * Always enabled
+   * Confirm dialog with strong warning
+   * Ask for reason (required text input)
+Visual:
+[Promote to 25% ▶] [Pause ⏸] [Rollback ⏮]
+    primary          warning    danger
+
+
+________________
+
+
+7.10 Hooks & Utilities
+Hook: useWebSocket
+Purpose: Manage WebSocket connection
+Usage:
+const { messages, connected, sendMessage } = useWebSocket('ws://localhost:8000/ws');
+
+
+useEffect(() => {
+  if (messages.length > 0) {
+    const latest = messages[messages.length - 1];
+    if (latest.type === 'rollout_update') {
+      // Update rollout data
+    }
+  }
+}, [messages]);
+
+
+Features:
+* Auto-reconnect on disconnect
+* Message queue (store last N messages)
+* Connection status indicator
+* Error handling
+Hook: useRollout
+Purpose: Fetch and subscribe to rollout data
+Usage:
+const { rollout, loading, error, refetch } = useRollout(rolloutId);
+
+
+Features:
+* Fetch on mount
+* Re-fetch on WebSocket update
+* Loading and error states
+* Manual refetch function
+Hook: useRingHealth
+Purpose: Fetch ring health metrics
+Usage:
+const { health, loading } = useRingHealth(ring, {
+  windowMinutes: 5,
+  pollInterval: 5000 // 5 seconds
+});
+
+
+Features:
+* Auto-polling at interval
+* Pause polling when window not focused
+* Memoization to prevent unnecessary re-renders
+API Client (lib/api.ts)
+Purpose: Centralized API calls
+Functions:
+// Rollouts
+createRollout(version: string)
+getRollout(rolloutId: string)
+listRollouts()
+startRollout(rolloutId: string)
+promoteRollout(rolloutId: string)
+pauseRollout(rolloutId: string, reason?: string)
+rollbackRollout(rolloutId: string, reason: string)
+shouldPromote(rolloutId: string)
+
+
+// Health
+getRingHealth(ring: string, windowMinutes?: number)
+
+
+Implementation:
+* Use fetch or axios
+* Base URL from environment variable
+* Error handling and retries
+* Response type validation
+________________
+
+
+8. SIMULATOR SPECIFICATIONS
+8.1 Device Simulator
+Purpose: Simulate 1,000 hospital TV devices sending health checks
+Requirements:
+* 1,000 devices distributed across rings
+* Send health check every 5 seconds per device
+* Realistic health data (crash_free, boot_ok, latency)
+* Support failure injection (increase crash rate on command)
+* CLI interface for control
+8.2 Device Distribution
+Ring Assignment:
+Pilot: 10% = 100 devices
+Ring 5%: 5% = 50 devices
+Ring 25%: 25% = 250 devices
+Ring 100%: 60% = 600 devices
+Total: 1,000 devices
+
+
+Rationale:
+* Pilot gets more devices (10% instead of 0.01%) for demo visibility
+* Still shows ring progression concept
+* Can scale down to 100 devices if performance issues
+8.3 Health Data Generation
+For Each Device:
+Normal State (No Failures):
+boot_ok: true (with 0.1% random failure)
+crash_free: 0.99 + random(-0.01, +0.01) = [0.98, 1.00]
+checkin_latency_ms: 50 + random(-20, +20) = [30, 70]
+
+
+Failure Injected State:
+When inject_failure(ring="ring_5", crash_rate=0.025):
+  For devices in ring_5:
+    crash_free: 0.975 + random(-0.01, +0.01) = [0.965, 0.985]
+    Some devices may fail to boot (10% chance)
+    Latency may increase (2x normal)
+
+
+Realistic Patterns:
+* Gradual degradation (not instant 0%)
+* Some variance between devices
+* Correlated failures (network issues affect latency + crash rate)
+8.4 Simulator CLI
+Commands:
+Start simulator:
+python device_sim.py --devices 1000 --interval 5
+
+
+Inject failure:
+# In running simulator:
+> inject pilot 0.05      # 5% crash rate in pilot
+> inject ring_5 0.025    # 2.5% crash rate in ring_5
+> clear                  # Clear all failures
+> status                 # Show current state
+> quit                   # Stop simulator
+
+
+Options:
+* --devices N: Number of devices to simulate
+* --interval S: Seconds between health checks
+* --api-url URL: SafeRoll API URL (default: http://localhost:8000)
+8.5 Demo Scenarios
+Scenario 1: Good Rollout (Green Path)
+1. Start simulator (all healthy)
+2. Create rollout v2.1
+3. Start rollout (deploy to pilot)
+4. Wait 2 minutes (pilot stays green)
+5. Promote to ring_5 (passes SLO)
+6. Wait 2 minutes (ring_5 stays green)
+7. Promote to ring_25
+8. Promote to ring_100
+9. Rollout completes successfully
+
+
+Duration: ~8-10 minutes
+Scenario 2: Bad Rollout with Save (The WOW Moment)
+1. Start simulator (all healthy)
+2. Create rollout v2.1_buggy
+3. Start rollout (deploy to pilot)
+4. Wait 1 minute (pilot looks OK)
+5. Promote to ring_5
+6. Wait 30 seconds
+7. **INJECT FAILURE**: crash_rate=0.025 in ring_5
+8. Watch metrics turn red
+9. SafeRoll detects critical failure
+10. **AUTO-ROLLBACK** triggered
+11. Show event log: "Auto-rollback at 10:45 AM"
+12. Highlight: 950,000 devices saved from failure
+
+
+Duration: ~5 minutes
+Key Moment: When crash rate crosses 95% threshold and SafeRoll auto-rolls back without human intervention. This is the demo's climax.
+Scenario 3: Manual Intervention
+1. Start rollout
+2. Promote to ring_5
+3. Inject minor failure (crash_rate=0.01, just below threshold)
+4. SLO gates turn yellow (PAUSE decision)
+5. User manually pauses
+6. Investigate (simulate looking at logs)
+7. Clear failure
+8. Resume rollout
+9. Complete successfully
+
+
+________________
+
+
+9. BUSINESS LOGIC & RULES
+9.1 Ring Sizing
+Concept: Progressive exposure to limit blast radius
+Ring
+	Percentage
+	Device Count (1M fleet)
+	Purpose
+	Pilot
+	0.01%
+	100
+	Internal testing, engineers
+	Ring 5%
+	5%
+	50,000
+	Early adopters, friendly hospitals
+	Ring 25%
+	25%
+	250,000
+	Mainstream rollout
+	Ring 100%
+	100%
+	1,000,000
+	Full fleet
+	Progression Time:
+* Pilot: Wait 2-4 hours before promoting
+* Ring 5%: Wait 4-8 hours
+* Ring 25%: Wait 12-24 hours
+* Ring 100%: Final deployment
+MVP Simplification: For demo, use faster timings (2-5 minutes per ring) to show full flow quickly.
+9.2 SLO Thresholds
+Why These Numbers:
+Crash-Free Rate: 99.0%
+* 1% failure = 10,000 affected devices per 1M
+* Acceptable for non-critical bugs
+* Below 95% = Critical (50,000+ devices at risk)
+Boot Success Rate: 99.5%
+* Boot failures are more serious (device unusable)
+* Higher threshold than crash rate
+* Below 97% = Critical
+Median Latency: 500ms
+* Acceptable for health checks
+* Above 1000ms = Likely network issues
+* Can indicate overload or degradation
+Window: 5 minutes
+* Recent enough to catch issues quickly
+* Long enough to smooth out noise
+* Trade-off between reaction speed and false positives
+9.3 Decision Matrix
+Scenario
+	Crash-Free
+	Boot Success
+	Latency
+	Decision
+	Reason
+	All pass
+	≥99%
+	≥99.5%
+	≤500ms
+	PROMOTE
+	Safe to advance
+	One fails
+	98%
+	99.6%
+	450ms
+	PAUSE
+	Monitor closely
+	Two fail
+	97%
+	99%
+	600ms
+	PAUSE
+	Concerning but not critical
+	Critical
+	94%
+	any
+	any
+	ROLLBACK
+	Immediate action needed
+	Critical
+	any
+	96%
+	any
+	ROLLBACK
+	Boot failures critical
+	Guiding Principles:
+1. Bias toward safety - Better to pause unnecessarily than deploy bad update
+2. Automatic rollback only on critical failures - Prevents disasters
+3. Manual override always available - Engineers can make judgment calls
+4. Transparent reasoning - Always show why decision was made
+9.4 Time Windows
+Health Aggregation:
+* Default: Last 5 minutes
+* Rationale: Recent enough to detect issues, long enough to smooth noise
+* Adjustable in API: ?window_minutes=10
+Promotion Cooldown:
+* After promotion, wait minimum 2-5 minutes before evaluating next promotion
+* Prevents rushing through rings
+* Gives time for updates to deploy and devices to report
+Auto-Rollback Check Frequency:
+* Every 10-30 seconds
+* Fast enough to catch disasters quickly
+* Not so fast it overwhelms system
+9.5 Failure Patterns
+Gradual Degradation:
+Time 0: Deploy to ring_5
+Time 1min: Crash rate 99.0% (on threshold)
+Time 2min: Crash rate 98.5% (below threshold, PAUSE)
+Time 3min: Crash rate 97.0% (concerning)
+Time 4min: Crash rate 94.0% (CRITICAL, AUTO-ROLLBACK)
+
+
+Immediate Catastrophe:
+Time 0: Deploy to ring_5
+Time 30sec: Crash rate 85% (CRITICAL, IMMEDIATE ROLLBACK)
+
+
+Network Issue:
+Time 0: Deploy to ring_5
+Time 1min: Latency spikes to 2000ms
+Time 2min: Some devices stop reporting (missed health checks)
+Time 3min: Crash rate appears to drop (but actually devices offline)
+Decision: ROLLBACK due to health check failures
+
+
+________________
+
+
+10. USER INTERFACE SPECIFICATIONS
+10.1 Design Principles
+1. Clarity Over Cleverness
+   * Show exact numbers, not just colors
+   * Explain why decisions were made
+   * Avoid jargon (or define it)
+2. Status at a Glance
+   * Use color consistently (green=good, yellow=warning, red=critical)
+   * Large, bold metrics
+   * Visual hierarchy (most important info largest)
+3. Real-time Responsiveness
+   * WebSocket updates feel instant
+   * Smooth animations (not jarring)
+   * Loading states for all async operations
+4. Actionable
+   * Clear call-to-action buttons
+   * Confirm before destructive actions
+   * Disable buttons when action not allowed (with tooltip explaining why)
+5. Professional
+   * Clean, modern design
+   * Consistent spacing and typography
+   * Production-ready look (not a toy)
+10.2 Color Scheme
+Status Colors:
+* Green (#10B981): Pass, healthy, success
+* Yellow (#F59E0B): Warning, attention needed
+* Red (#EF4444): Fail, critical, danger
+* Blue (#3B82F6): Active, in progress
+* Gray (#6B7280): Inactive, neutral
+UI Colors:
+* Background: White (#FFFFFF) or very light gray (#F9FAFB)
+* Text: Dark gray (#111827)
+* Border: Light gray (#E5E7EB)
+* Accent: Blue (#3B82F6)
+10.3 Typography
+Headings:
+* H1: 32px, bold, page title
+* H2: 24px, semibold, section title
+* H3: 20px, semibold, subsection
+Body:
+* Regular: 16px
+* Small: 14px
+* Tiny: 12px (labels, timestamps)
+Metrics:
+* Large numbers: 48px, bold
+* Thresholds: 14px, gray
+Font Family: System font stack (Inter, SF Pro, Helvetica, Arial)
+10.4 Layout & Spacing
+Container:
+* Max width: 1200px
+* Padding: 24px
+Grid:
+* 3-column grid for metric cards
+* 12px gap between cards
+Card:
+* Border radius: 8px
+* Border: 1px solid gray
+* Padding: 16px
+* Shadow: subtle (0 1px 3px rgba(0,0,0,0.1))
+Responsive:
+* Desktop: 3-column grid
+* Tablet: 2-column grid
+* Mobile: 1-column stack
+10.5 Animations
+Page Transitions:
+* Fade in: 200ms
+* Slide in: 300ms
+Metric Updates:
+* Number change: Count up animation (500ms)
+* Color change: Smooth transition (300ms)
+Button Hover:
+* Scale: 1.05
+* Shadow: Increase
+* Transition: 200ms
+Loading States:
+* Spinner: Rotating
+* Skeleton: Pulsing shimmer
+10.6 Accessibility
+* Contrast: WCAG AA minimum (4.5:1 for text)
+* Keyboard Navigation: All actions accessible via keyboard
+* Screen Readers: ARIA labels on all interactive elements
+* Focus Indicators: Clear blue outline on focused elements
+* Alt Text: For all images and icons
+10.7 Responsive Breakpoints
+Mobile: < 640px
+Tablet: 640px - 1024px
+Desktop: > 1024px
+
+
+Mobile Optimizations:
+* Stack all cards vertically
+* Larger touch targets (min 44x44px)
+* Simplified charts (fewer data points)
+* Hamburger menu for navigation
+________________
+
+
+11. DEMO SCENARIOS
+11.1 Scenario 1: Happy Path (2 minutes)
+Objective: Show SafeRoll working perfectly with a good update
+Script:
+1. Open dashboard - "Here's SafeRoll managing our fleet"
+2. Click "New Rollout" - version: v2.1
+3. Click "Start" - deploys to pilot (100 devices)
+4. Watch metrics: All green ✓
+5. Click "Promote" - moves to 5% (50 devices in demo)
+6. Watch metrics: Still green ✓
+7. Click "Promote" - moves to 25%
+8. Click "Promote" - moves to 100%
+9. Show event timeline - clean progression
+10. "This is how SafeRoll handles good updates"
+
+
+Key Points:
+* Fast, confident progression
+* All SLOs passing
+* Event log shows decision reasoning
+* "This normally takes hours, I'm speeding it up for demo"
+11.2 Scenario 2: Disaster Averted (3-4 minutes)
+Objective: THE WOW MOMENT - Show auto-rollback saving the day
+Script:
+1. "Now let me show what happens with a BAD update"
+2. Create rollout v2.1_buggy
+3. Start rollout - deploys to pilot
+4. Wait 30 seconds - "Pilot looks fine... SLOs passing"
+5. Promote to 5% (50 devices)
+6. Wait 10 seconds - "Starting to see issues..."
+7. **INJECT FAILURE** (from simulator CLI)
+   > inject ring_5 0.03
+8. Watch dashboard:
+   - Crash-free rate drops: 99% → 98% → 97%
+   - Metrics turn YELLOW
+   - Then RED
+9. "Notice SafeRoll detected the problem..."
+10. **AUTO-ROLLBACK TRIGGERS** (at 94% crash-free)
+11. Show notification: "🚨 Auto-Rollback Triggered"
+12. Show event log: "Critical failure detected"
+13. Pull up calculator:
+    - "50 devices failed in ring_5"
+    - "SafeRoll just saved 950 devices from the same fate"
+    - "At $100 per device, that's $95,000 saved"
+    - "Plus avoided support tickets, reputation damage"
+14. "This is the power of progressive deployment with intelligent monitoring"
+
+
+Key Points:
+* Visual: Watch metrics turn from green → yellow → red
+* Automatic: No human intervention needed
+* Fast: Detected in <2 minutes
+* Quantify: Show exact numbers saved
+* Emotion: "Disaster averted" feeling
+11.3 Scenario 3: Manual Pause (2 minutes)
+Objective: Show human judgment overriding automation
+Script:
+1. Create rollout v2.2
+2. Start and promote to 5%
+3. Inject minor failure (crash_rate=0.01)
+4. Metrics turn YELLOW (not red)
+5. SafeRoll says "PAUSE" (not critical yet)
+6. "Engineer notices something off"
+7. Click "Pause" button
+8. Enter reason: "Investigating network latency"
+9. "Now we can debug without rushing"
+10. Clear failure from simulator
+11. "Issue resolved"
+12. Click "Resume" (re-evaluate, now passes)
+13. Continue rollout
+14. "SafeRoll gives you control + safety"
+
+
+Key Points:
+* SafeRoll advises, human decides
+* Pause doesn't require rollback
+* Can resume after investigation
+* Balance automation + human judgment
+________________
+
+
+12. DEVELOPMENT WORKFLOW
+12.1 Initial Setup (Day 1)
+Step 1: Create Project Structure
+mkdir saferoll && cd saferoll
+mkdir -p backend/app/{api,core,models}
+mkdir -p simulator
+mkdir -p frontend/src/{components,pages,hooks,lib}
+
+
+Step 2: Set Up Backend
+cd backend
+python -m venv venv
+source venv/bin/activate  # or venv\Scripts\activate on Windows
+pip install fastapi uvicorn pydantic python-dotenv websockets
+
+
+Step 3: Set Up Frontend
+cd ../frontend
+npm create vite@latest . -- --template react-ts
+npm install
+npm install @tanstack/react-query zustand recharts
+
+
+Step 4: Set Up Simulator
+cd ../simulator
+# (uses same venv as backend)
+pip install requests click schedule
+
+
+12.2 Development Process (Weeks 1-2)
+Week 1: Backend + Simulator
+Day 1-2: Core Backend
+* [ ] Create main.py with FastAPI app
+* [ ] Implement health endpoints (POST /api/health, GET /api/health/ring/{ring})
+* [ ] Test with curl or Postman
+Day 3-4: Device Simulator
+* [ ] Create device_sim.py with Device and Simulator classes
+* [ ] Test sending health to backend
+* [ ] Verify backend receives and stores data
+Day 5-7: Rollout Logic
+* [ ] Implement rollout endpoints (create, start, promote, pause, rollback)
+* [ ] Implement SLO evaluation engine
+* [ ] Implement should_promote decision logic
+* [ ] Test full flow: create → start → health checks → evaluate → promote
+Week 2: Frontend + Integration
+Day 8-10: Basic Dashboard
+* [ ] Create Dashboard page (list rollouts)
+* [ ] Create RolloutDetail page
+* [ ] Implement API client (lib/api.ts)
+* [ ] Connect pages to backend
+Day 11-12: Real-time Updates
+* [ ] Implement WebSocket connection (useWebSocket hook)
+* [ ] Test live updates in dashboard
+* [ ] Add auto-refresh fallback
+Day 13-14: Charts & Metrics
+* [ ] Create MetricCard component
+* [ ] Create HealthChart component
+* [ ] Implement useRingHealth hook
+* [ ] Test with live simulator data
+Week 3: Polish + Demo
+Day 15-16: Event Timeline + Actions
+* [ ] Create EventTimeline component
+* [ ] Create ActionButtons component
+* [ ] Wire up promote/pause/rollback actions
+* [ ] Add confirmation dialogs
+Day 17-18: Auto-Rollback
+* [ ] Implement background monitor in backend
+* [ ] Test auto-rollback trigger
+* [ ] Add visual alerts in frontend
+Day 19-21: Demo Scenarios + Documentation
+* [ ] Create demo_scenarios.py with pre-built flows
+* [ ] Test both good and bad rollout scenarios
+* [ ] Record demo video
+* [ ] Write README and documentation
+* [ ] Prepare presentation slides
+12.3 Daily Workflow
+Morning:
+1. Pull latest changes (if working with team)
+2. Review task list for the day
+3. Start backend server: python run.py
+4. Start frontend dev server: npm run dev
+During Development:
+1. Make changes to one component at a time
+2. Test immediately in browser or with curl
+3. Use browser DevTools to debug
+4. Check backend logs for errors
+5. Commit working changes frequently
+Evening:
+1. Run full demo scenario to verify everything works
+2. Commit all changes with descriptive messages
+3. Push to GitHub
+4. Update task list for tomorrow
+12.4 Testing Strategy
+Manual Testing (Primary for MVP):
+* Test each endpoint with curl or Postman
+* Test frontend in browser (Chrome DevTools)
+* Run demo scenarios end-to-end
+* Test edge cases (no data, errors, disconnections)
+Automated Testing (Optional for MVP):
+* Backend: pytest for API endpoints
+* Frontend: Vitest for components
+* E2E: Playwright for full scenarios
+Testing Checklist:
+* [ ] Backend receives health checks
+* [ ] Health aggregation calculates correctly
+* [ ] SLO evaluation returns correct decisions
+* [ ] Rollout state transitions work
+* [ ] Frontend displays metrics correctly
+* [ ] WebSocket updates arrive in real-time
+* [ ] Auto-rollback triggers on critical failure
+* [ ] Manual actions (promote/pause/rollback) work
+* [ ] Event timeline shows all events
+* [ ] Dashboard handles multiple rollouts
+* [ ] Simulator can inject failures
+* [ ] Demo scenarios run smoothly
+12.5 Common Issues & Solutions
+Issue: Backend won't start
+* Check: Python version 3.11+
+* Check: All dependencies installed (pip list)
+* Check: Port 8000 not in use (lsof -i :8000 on Mac/Linux)
+Issue: Frontend can't connect to backend
+* Check: Backend is running on http://localhost:8000
+* Check: CORS configured correctly in backend
+* Check: API_BASE_URL in frontend matches backend URL
+Issue: WebSocket disconnects frequently
+* Check: Backend WebSocket endpoint accepts connections
+* Check: Frontend reconnect logic works
+* Check: No proxy/firewall blocking WebSocket
+Issue: Metrics not updating
+* Check: Simulator is sending health checks
+* Check: Backend logs show health received
+* Check: Frontend polling interval not too long
+* Check: WebSocket broadcasting works
+Issue: Auto-rollback not triggering
+* Check: Background monitor is running
+* Check: Health metrics actually below threshold
+* Check: Rollout is in active state (not paused)
+________________
+
+
+13. TESTING STRATEGY
+13.1 Unit Testing
+Backend Tests (pytest):
+Test SLO Evaluation:
+def test_slo_evaluation_all_pass():
+    health = {
+        'crash_free_rate': 0.995,
+        'boot_success_rate': 0.998,
+        'median_latency_ms': 45
+    }
+    decision = evaluate_slo_gates(health)
+    assert decision['action'] == 'PROMOTE'
+    assert decision['evaluation']['overall'] == 'PASS'
+
+
+def test_slo_evaluation_critical_failure():
+    health = {
+        'crash_free_rate': 0.940,  # Below 95%
+        'boot_success_rate': 0.998,
+        'median_latency_ms': 45
+    }
+    decision = evaluate_slo_gates(health)
+    assert decision['action'] == 'ROLLBACK'
+
+
+Test Health Aggregation:
+def test_aggregate_health_empty():
+    result = aggregate_ring_health('pilot', [])
+    assert result['total_devices'] == 0
+    assert result['crash_free_rate'] == 1.0
+
+
+def test_aggregate_health_with_data():
+    health_data = [
+        {'crash_free': 0.99, 'boot_ok': True, 'checkin_latency_ms': 50},
+        {'crash_free': 0.98, 'boot_ok': True, 'checkin_latency_ms': 60},
+    ]
+    result = aggregate_ring_health('pilot', health_data)
+    assert result['total_devices'] == 2
+    assert result['crash_free_rate'] == 0.985
+
+
+Frontend Tests (Vitest):
+Test MetricCard Component:
+test('MetricCard shows green when passing', () => {
+  render(<MetricCard value={0.995} threshold={0.990} />);
+  expect(screen.getByText('PASSING')).toBeInTheDocument();
+});
+
+
+test('MetricCard shows red when failing', () => {
+  render(<MetricCard value={0.985} threshold={0.990} />);
+  expect(screen.getByText('FAILING')).toBeInTheDocument();
+});
+
+
+13.2 Integration Testing
+Test Full Rollout Flow:
+def test_full_rollout_flow():
+    # Create rollout
+    response = client.post('/api/rollouts', json={'version': 'v2.1'})
+    rollout_id = response.json()['rollout_id']
+    
+    # Start rollout
+    response = client.post(f'/api/rollouts/{rollout_id}/start')
+    assert response.json()['state'] == 'pilot'
+    
+    # Send healthy health checks
+    for i in range(100):
+        client.post('/api/health', json={
+            'device_id': f'device_{i}',
+            'ring': 'pilot',
+            'crash_free': 0.995,
+            'boot_ok': True,
+            'checkin_latency_ms': 50
+        })
+    
+    # Check should promote
+    response = client.get(f'/api/rollouts/{rollout_id}/should_promote')
+    assert response.json()['action'] == 'PROMOTE'
+    
+    # Promote
+    response = client.post(f'/api/rollouts/{rollout_id}/promote')
+    assert response.json()['state'] == 'ring_5'
+
+
+13.3 E2E Testing (Manual for MVP)
+Test Scenarios:
+1. Happy Path
+   * Create rollout
+   * Start rollout
+   * Watch pilot metrics (green)
+   * Promote through all rings
+   * Verify completed state
+2. Auto-Rollback
+   * Create rollout
+   * Start rollout
+   * Promote to ring_5
+   * Inject failure (crash_rate > 5%)
+   * Verify auto-rollback triggers
+   * Check event log shows AUTO_ROLLBACK
+3. Manual Pause
+   * Create rollout
+   * Start rollout
+   * Click Pause button
+   * Verify state changes to paused
+   * Verify cannot promote while paused
+4. WebSocket Updates
+   * Open dashboard in browser
+   * Open second browser tab
+   * Create rollout in tab 1
+   * Verify rollout appears in tab 2 without refresh
+13.4 Load Testing (Optional)
+Simulator Load Test:
+# Run with 10,000 devices
+python device_sim.py --devices 10000 --interval 5
+
+
+Expected Performance:
+* Backend should handle 2,000+ health checks/second
+* Dashboard should update within 1 second of change
+* No memory leaks over 1 hour run
+Monitoring:
+* Backend CPU < 50%
+* Backend memory < 500MB
+* Frontend rendering < 100ms
+________________
+
+
+14. DEPLOYMENT GUIDE
+14.1 Local Deployment (Demo)
+Prerequisites:
+* Python 3.11+ installed
+* Node.js 18+ installed
+* Git installed
+Setup Steps:
+# 1. Clone repository
+git clone <your-repo>
+cd saferoll
+
+
+# 2. Backend setup
+cd backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+
+# 3. Start backend
+python run.py
+# Backend running on http://localhost:8000
+
+
+# 4. Frontend setup (new terminal)
+cd frontend
+npm install
+npm run dev
+# Frontend running on http://localhost:5173
+
+
+# 5. Start simulator (new terminal)
+cd simulator
+source ../backend/venv/bin/activate
+python device_sim.py
+
+
+Access:
+* Dashboard: http://localhost:5173
+* API Docs: http://localhost:8000/docs
+* API: http://localhost:8000/api
+14.2 Cloud Deployment (Production)
+Option 1: Railway (Recommended for Backend)
+1. Create account at railway.app
+2. Create new project
+3. Add PostgreSQL database
+Deploy backend:
+railway up
+4. Set environment variables:
+DATABASE_URL=<from railway>CORS_ORIGINS=https://your-frontend.vercel.app
+5. Option 2: Render
+1. Create account at render.com
+2. Create Web Service
+3. Connect GitHub repo
+4. Set build command: pip install -r requirements.txt
+5. Set start command: python run.py
+Frontend Deployment: Vercel
+1. Create account at vercel.com
+2. Import Git repository
+3. Set build command: npm run build
+Set environment variable:
+VITE_API_URL=https://your-backend.railway.app
+4. 5. Deploy
+Domain Setup:
+* Backend: https://saferoll-api.railway.app
+* Frontend: https://saferoll.vercel.app
+14.3 Environment Variables
+Backend (.env):
+DATABASE_URL=postgresql://user:pass@host:5432/db
+CORS_ORIGINS=http://localhost:5173,https://saferoll.vercel.app
+PORT=8000
+LOG_LEVEL=info
+
+
+Frontend (.env):
+VITE_API_URL=http://localhost:8000
+VITE_WS_URL=ws://localhost:8000
+
+
+14.4 Production Considerations
+Backend:
+* Use PostgreSQL instead of in-memory
+* Add request rate limiting
+* Enable HTTPS/TLS
+* Set up logging (Sentry, LogRocket)
+* Add health check endpoint for monitoring
+* Use gunicorn or multiple uvicorn workers
+Frontend:
+* Minify and bundle assets
+* Enable CDN for static files
+* Add error tracking (Sentry)
+* Optimize images and charts
+* Add loading states everywhere
+* Handle offline gracefully
+Security:
+* Add authentication (JWT tokens)
+* Validate all inputs
+* Sanitize error messages (no stack traces to users)
+* Rate limit API endpoints
+* Use HTTPS only
+* Set secure CORS policies
+Monitoring:
+* Set up uptime monitoring (UptimeRobot, Pingdom)
+* Monitor API response times
+* Track error rates
+* Monitor WebSocket connections
+* Set up alerts for downtime
+________________
+
+
+15. PRESENTATION GUIDE
+15.1 Slide Deck Outline
+Slide 1: Title
+* SafeRoll: Intelligent Progressive Rollout Orchestrator
+* Your Name
+* Date
+Slide 2: The Problem
+* PDi has 1M+ hospital TVs deployed
+* Current deployment: All-or-nothing (high risk)
+* One bad update = $50M-$100M disaster
+* Patient safety concerns
+Slide 3: Real-World Example
+* Microsoft Windows Update (2018)
+* Bricked millions of PCs
+* Cost: Billions in damages
+* Microsoft now uses ring deployment
+Slide 4: The Solution - SafeRoll
+* Progressive deployment through rings
+* Real-time health monitoring
+* Automatic rollback on failure
+* Saves 95%+ of fleet from bad updates
+Slide 5: How It Works
+* Diagram: Pilot → 5% → 25% → 100%
+* SLO gates at each stage
+* Automatic decisions in seconds
+Slide 6: Live Demo
+* "Let me show you what happens when a bad update is deployed..."
+* [Switch to live demo]
+Slide 7: Demo Results
+* 50 devices affected (ring_5)
+* 950 devices saved
+* $95,000 in hardware costs avoided
+* Countless support tickets prevented
+Slide 8: Technical Architecture
+* High-level diagram
+* FastAPI backend
+* React dashboard
+* WebSocket for real-time
+* Scales to millions of devices
+Slide 9: Key Features
+* Progressive deployment
+* Real-time monitoring
+* Automatic rollback
+* Audit logging
+* Works with existing GENiO
+Slide 10: Business Impact
+* 99% reduction in update incidents
+* $50M-$100M disaster prevention
+* ROI: 1000x+ (one prevented incident pays for years)
+* Competitive advantage
+Slide 11: Integration
+* Works WITH GENiO, not instead of
+* Low-risk adoption (read-only advisor → full automation)
+* Can deploy tomorrow
+Slide 12: Next Steps
+* Phase 1: Pilot with 10 hospitals
+* Phase 2: Integrate with GENiO API
+* Phase 3: Roll out to all customers
+* Timeline: 3-6 months
+Slide 13: Thank You
+* Questions?
+* Contact info
+* GitHub repo link
+15.2 Demo Script (Detailed)
+Setup (Before Demo):
+1. Open 3 windows:
+   * Window 1: SafeRoll dashboard (browser)
+   * Window 2: Simulator terminal
+   * Window 3: Presentation slides
+2. Start backend and frontend
+3. Start simulator (healthy state)
+4. Have timer ready
+Demo Flow (5-7 minutes):
+[0:00-0:30] Introduction
+* "I'm going to show you SafeRoll in action"
+* "This is a live demo with 1,000 simulated hospital TVs"
+* Show dashboard: "All devices currently healthy"
+[0:30-1:00] Create Rollout
+* Click "New Rollout"
+* Enter version: "v2.1_buggy"
+* "This version has a subtle network bug we don't know about yet"
+* Click "Create"
+[1:00-1:30] Deploy to Pilot
+* Click "Start Rollout"
+* "Deploying to 100 pilot devices"
+* Show metrics: All green
+* "Pilot looks good after 30 seconds"
+[1:30-2:00] Promote to 5%
+* Click "Promote to Ring 5%"
+* "Now deploying to 50 devices (5% of demo fleet)"
+* Show metrics: Still green initially
+* "Everything looks fine so far..."
+[2:00-2:30] THE MOMENT
+* Switch to simulator terminal
+* Type: inject ring_5 0.03
+* Press Enter
+* Switch back to dashboard
+* Watch metrics turn red
+* Point to crash-free dropping: "99% → 98% → 97% → 96%..."
+[2:30-3:00] Auto-Rollback
+* "Watch what happens when it hits 95%..."
+* Auto-rollback triggers
+* Show alert: "🚨 Auto-Rollback Triggered"
+* Show event log: "Critical failure detected at 2:47 PM"
+[3:00-3:30] Impact Analysis
+* "Let's look at what just happened"
+* Show numbers:
+   * "50 devices in Ring 5% were affected"
+   * "950 devices were saved from the same bug"
+   * "At $100 per device, that's $95,000 in hardware alone"
+   * "Plus thousands of support tickets avoided"
+   * "And zero patient safety incidents"
+[3:30-4:00] Show Event Timeline
+* Scroll through event log
+* Point out: "Every decision is logged"
+* "See the SLO evaluation that triggered rollback"
+* "Complete audit trail for compliance"
+[4:00-4:30] Emphasize Key Points
+* "This happened automatically in 2 minutes"
+* "No human intervention needed"
+* "SafeRoll detected the issue and took action"
+* "This is the power of progressive deployment"
+[4:30-5:00] Answer Questions
+* "What if the engineer wants to override?"
+* Show manual controls (promote, pause, rollback)
+* "SafeRoll advises, but humans can always take control"
+[5:00+] Bonus: Good Rollout
+* "Want to see a successful rollout?"
+* Quickly run through green path (30 seconds)
+* Show smooth progression through all rings
+15.3 Talking Points
+When they ask: "Why not just test better?"
+"Great question. Even with perfect testing, production has variables you can't simulate: real network conditions, device configurations, user behaviors. SafeRoll is the last line of defense. It's not instead of testing, it's in addition to testing."
+When they ask: "What if it's too slow?"
+"Actually it's faster. Without SafeRoll, you'd deploy cautiously, maybe wait days between stages out of fear. With SafeRoll, you can be aggressive because you have safety nets. Microsoft ships Windows updates to 1 billion devices in days using this approach."
+When they ask: "How much does it cost?"
+"The real question is: how much does NOT having it cost? One prevented incident pays for SafeRoll for years. And the good news: most of this infrastructure you already have. SafeRoll is a relatively thin layer on top."
+When they ask: "Can we pilot it?"
+"Absolutely. Start with read-only mode: SafeRoll tells you what it would do, but humans make final decisions. Once you trust it, enable automatic rollback. Zero risk to try."
+________________
+
+
+16. SUCCESS METRICS
+16.1 Demo Success Criteria
+During Presentation:
+* [ ] Demo runs without errors
+* [ ] Auto-rollback triggers visibly
+* [ ] Audience has "wow" moment
+* [ ] Questions indicate understanding
+* [ ] Hiring manager takes notes
+Technical Success:
+* [ ] All 3 demo scenarios work
+* [ ] WebSocket updates in real-time
+* [ ] No crashes or freezes
+* [ ] Clean, professional UI
+* [ ] Metrics accurate
+Narrative Success:
+* [ ] Problem clearly explained
+* [ ] Solution value articulated
+* [ ] Business impact quantified
+* [ ] Integration story believable
+* [ ] Competitive advantage clear
+16.2 Post-Demo Follow-Up
+Within 24 Hours:
+1. Send thank you email
+2. Include link to:
+   * GitHub repo (public)
+   * Live demo site (deployed)
+   * Architecture documentation
+   * Demo video (2-3 min)
+Email Template:
+Subject: SafeRoll Demo - Thank You + Resources
+
+
+Hi [Hiring Manager],
+
+
+Thank you for the opportunity to present SafeRoll today. I enjoyed showing
+how progressive deployment can prevent catastrophic failures at scale.
+
+
+Here are the resources I mentioned:
+- Live Demo: https://saferoll.vercel.app
+- GitHub: https://github.com/[you]/saferoll
+- Demo Video: [link]
+- Architecture Docs: [link]
+
+
+I'm excited about the possibility of bringing this thinking to PDi's 
+engineering team. SafeRoll demonstrates my approach to production systems:
+anticipate failures, build safety nets, and always protect the user.
+
+
+Looking forward to next steps!
+
+
+[Your Name]
+
+
+________________
+
+
+17. FINAL CHECKLIST
+17.1 Before Demo Day
+One Week Before:
+* [ ] All code complete and tested
+* [ ] Demo scenarios run smoothly (10+ practice runs)
+* [ ] GitHub repo public and clean
+* [ ] README.md complete with screenshots
+* [ ] Demo video recorded (backup if live demo fails)
+* [ ] Presentation slides finalized
+* [ ] Talking points memorized
+One Day Before:
+* [ ] Deploy to cloud (Railway + Vercel)
+* [ ] Test deployed version
+* [ ] Backup local version
+* [ ] Charge laptop fully
+* [ ] Test projector connection
+* [ ] Print slides as backup
+* [ ] Set up demo data (rollouts ready to go)
+Day Of:
+* [ ] Arrive 15 minutes early
+* [ ] Test internet connection
+* [ ] Open all necessary windows
+* [ ] Close distracting apps
+* [ ] Set "Do Not Disturb" mode
+* [ ] Have water nearby
+* [ ] Take deep breath
+17.2 Presentation Day
+Setup (10 minutes before):
+1. Connect laptop to projector
+2. Open SafeRoll dashboard (verify loading)
+3. Open simulator terminal (verify running)
+4. Open slide deck (ready to present)
+5. Test audio if using demo video
+6. Close unnecessary applications
+During Presentation:
+1. Speak clearly and confidently
+2. Make eye contact
+3. Don't apologize for minor glitches
+4. If something breaks, fall back to video
+5. Pause for questions
+6. Show enthusiasm (you believe in this!)
+After Presentation:
+1. Answer all questions honestly
+2. If you don't know, say so
+3. Offer to follow up with details
+4. Thank them for their time
+5. Send follow-up email within 24 hours
+________________
+
+
+18. RESOURCES & REFERENCES
+18.1 Learning Resources
+Progressive Delivery:
+* LaunchDarkly: "What is Progressive Delivery"
+* Microsoft: "Safe Deployment Practices"
+* Google: "How Google Tests Software"
+FastAPI:
+* Official Docs: https://fastapi.tiangolo.com
+* Real Python: FastAPI Tutorials
+React:
+* Official Docs: https://react.dev
+* React Query: https://tanstack.com/query
+System Design:
+* "Designing Data-Intensive Applications" (book)
+* ByteByteGo (YouTube channel)
+18.2 Tools & Libraries
+Backend:
+* FastAPI: https://fastapi.tiangolo.com
+* Uvicorn: https://www.uvicorn.org
+* Pydantic: https://docs.pydantic.dev
+Frontend:
+* React: https://react.dev
+* Vite: https://vitejs.dev
+* Recharts: https://recharts.org
+* Shadcn UI: https://ui.shadcn.com
+Deployment:
+* Railway: https://railway.app
+* Vercel: https://vercel.com
+* Render: https://render.com
+________________
+
+
+CONCLUSION
+This documentation provides everything needed to build SafeRoll from scratch. Use it as a specification to guide development with AI tools like Claude or GitHub Copilot.
+Key Priorities:
+1. Get the demo working (80% of value)
+2. Make it look professional (15% of value)
+3. Add bells and whistles (5% of value)
+Remember:
+* Start simple, add complexity gradually
+* Test frequently (after every component)
+* Focus on the demo scenarios (that's what they'll see)
+* Make it visually impressive (people remember what they see)
+* Practice the presentation (delivery matters)
+You Got This! 🚀
+Build SafeRoll, show them what you can do, and land that job.

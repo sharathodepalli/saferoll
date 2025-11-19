@@ -1,0 +1,165 @@
+﻿🔧 Build Prompt for Claude/Copilot — Use the Provided Documentation
+You are an expert full-stack engineer. You will read and follow the project documentation stored in this repository:
+* docs/📘 SAFEROLL - COMPLETE PROJECT DOCUMENTATION.txt
+(If not in docs/, search the workspace and use the file with the exact title. Treat it as the source of truth.)
+Your job
+   1. Ingest & summarize the documentation (architecture, APIs, data flow, simulator behavior, UI, SLO thresholds, demo script, deployment).
+   2. Generate a complete, runnable implementation that matches the doc exactly (or better), keeping scope tight for a smooth demo.
+   3. Print the exact commands to run locally (dev and docker), plus a 5-line demo script.
+________________
+
+
+Output requirements
+A. Repo structure
+Create this structure (match the doc; fill files with real, working code—no TODO placeholders):
+saferoll/
+  README.md
+  LICENSE
+  Makefile
+  docker-compose.yml
+  docs/
+    📘 SAFEROLL - COMPLETE PROJECT DOCUMENTATION.txt   # (kept as reference)
+    ARCHITECTURE.md
+  backend/
+    pyproject.toml
+    Dockerfile
+    app/
+      __init__.py
+      main.py
+      models.py
+      schemas.py
+      store.py
+      policy.py
+      metrics.py
+      rings.py
+      routes/
+        health.py
+        rollout.py
+        metrics.py
+      tests/
+        test_policy.py
+  simulator/
+    simulator.py
+    Dockerfile
+    sim_flags.json          # hot-toggled failure controls
+  frontend/
+    Dockerfile
+    index.html
+    package.json
+    tsconfig.json
+    vite.config.ts
+    postcss.config.cjs
+    tailwind.config.cjs
+    src/
+      main.tsx
+      App.tsx
+      api.ts
+      components/
+        RingCard.tsx
+        Controls.tsx
+        Stat.tsx
+      types.ts
+
+
+B. Tech stack (from the doc, or use these defaults)
+   * Backend: Python FastAPI + Uvicorn, Pydantic; in-memory store (SQLite optional), pytest; black/ruff.
+   * Frontend: Vite + React + TypeScript + Tailwind (single page).
+   * Simulator: Python asyncio + httpx (200 devices; hot failure toggle).
+   * Packaging: Dockerfiles for backend, simulator, frontend + docker-compose.yml.
+C. Contracts & behavior (adhere to doc; if missing, use these safe defaults)
+   * Rings in order: pilot → five → twentyfive → all.
+   * Rolling window: last 5 minutes of check-ins for active ring only.
+   * SLO thresholds (MVP):
+   * boot_success_rate ≥ 0.995 (≥99.5% of events have boot_ok=true)
+   * crash_free_median ≥ 0.990 (median of crash_free values ≥99.0%)
+   * checkin_ms_median ≤ 500
+   * On breach: set rollout state=paused, record Decision with reason + snapshot, surface Rollback suggested.
+   * Promotion: manual Promote only if the last 5-minute window is green; cooldown 120s after each promote.
+   * Auto-rollback (demo rule): if crash_free_median < 0.950 or boot_success_rate < 0.970, set target_version to last_known_good.
+D. Backend API (exact endpoints)
+POST /v1/checkin → device health in, returns:
+{
+  "rollout_id": "r-YYYYMMDD-01",
+  "apply": { "target_version": "1.2.0", "config_delta": null },
+  "next_check_seconds": 30,
+  "policy": { "backoff": "exp-jitter", "max_retries": "5" }
+}
+   *    * POST /v1/rollouts body: { "target_version":"1.2.0", "last_known_good":"1.1.0" }
+   * POST /v1/rollouts/{id}/promote
+   * POST /v1/rollouts/{id}/pause
+   * POST /v1/rollouts/{id}/rollback
+   * GET /v1/rollouts/{id} → state + last 10 decisions
+GET /v1/metrics → current ring metrics:
+{
+  "active_rollout_id":"r-...",
+  "active_ring":"five",
+  "window_seconds":300,
+  "boot_success":0.998,
+  "crash_free_median":0.993,
+  "checkin_ms_median":210,
+  "breaches":[]
+}
+   *    * (Optional, if the doc mentions “advisory mode”) GET /v1/should_promote?rollout_id=r-... → { decision:"yes"|"no", reason, metrics:{...} }
+E. Simulator (align with doc; otherwise use)
+   * 200 devices, each 3–5s POST /v1/checkin.
+   * Hot-toggle failures via simulator/sim_flags.json (e.g., set "error_rate": 0.10 to degrade boot_ok, crash_free, increase checkin_ms).
+   * CLI args: --devices 200 --error-rate 0.00 --latency-ms 150 --ring pilot.
+F. Frontend (single page; minimal but clean)
+   * Poll /v1/metrics and /v1/rollouts/{id} every 2s.
+   * Show 4 RingCard tiles (Pilot/5%/25%/All) with green/yellow/red status.
+   * Top controls: Promote, Pause, Rollback (call backend).
+   * Right rail: 3 metrics (cards) + last 5 decisions list.
+   * Keep styling simple with Tailwind; no routing.
+G. Policy & store internals
+   * Maintain deque per ring for last 5 minutes; drop old events on each write.
+   * Aggregates:
+   * boot_success = sum(boot_ok)/N
+   * crash_free_median = median(crash_free)
+   * checkin_ms_median = median(checkin_ms)
+   * Keep a single state object with:
+   * Active Rollout, decisions[], and windows{ring→deque}.
+   * Enforce promotion cooldown and green-window check in policy.py.
+H. Tests (pytest)
+   * Green window → should_promote=True.
+   * Crash-free below 0.990 → breach triggers pause.
+   * Auto-rollback when crash-free < 0.950.
+   * Cooldown prevents double promote.
+I. Tooling
+   * Python: black, ruff; Node: prettier, eslint.
+Makefile targets:
+make setup
+make run-backend
+make run-sim
+make run-frontend
+make demo           # docker-compose up
+make test
+   *    * Docker:
+   * Backend on 8000, Frontend on 5173, Simulator depends_on API.
+   * docker-compose up brings all three.
+J. README.md (must include)
+   * 60-second quickstart (dev & docker).
+   * Example curl calls for /v1/checkin, /v1/metrics, /promote.
+   * Demo script (90s): Pilot green → Promote → inject failures → auto-pause → Rollback.
+   * A small ASCII/mermaid architecture diagram.
+________________
+
+
+Build steps for you (Claude/Copilot)
+   1. Open docs/📘 SAFEROLL - COMPLETE PROJECT DOCUMENTATION.txt, extract all specific requirements, and reflect them in code. If the doc contains stricter/different thresholds, endpoints, or structures, use the doc values.
+   2. Scaffold the repo exactly as above, generating fully working code in each file.
+   3. Implement backend routes, policy logic, and ring window math; ensure /v1/metrics returns live values.
+   4. Implement the simulator with hot-toggle failures via sim_flags.json.
+   5. Implement the React dashboard (RingCard, Controls, Stat) with clean polling and color logic.
+   6. Add tests for policy edge cases; add tooling configs; format the code.
+   7. Write README.md, ARCHITECTURE.md, and Makefile; fill Dockerfiles; ensure docker-compose up runs end-to-end.
+   8. Print (in your final message) the exact commands to run locally and a 5-line demo narration.
+Deliver all code & docs inline (or as file updates) with no placeholders. If any ambiguity exists, follow the defaults above and note the assumption in README under “Assumptions.”
+________________
+
+
+Paste the generated files now. Then print:
+   * make setup && make run-backend
+   * make run-sim
+   * make run-frontend
+   * docker-compose up
+   * Demo script (5 lines)
